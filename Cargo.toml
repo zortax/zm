@@ -1,0 +1,48 @@
+[package]
+name = "zm"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui_tokio = { git = "https://github.com/zed-industries/zed" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component" }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
+tokio = { version = "1.50.0", features = ["full"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+dirs = "6.0.0"
+anyhow = "1.0.102"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+async-imap = { version = "0.11.2", default-features = false, features = ["runtime-tokio", "tokio"] }
+tokio-rustls = "0.26.4"
+rustls = "0.23.37"
+webpki-roots = "1.0.6"
+mail-parser = "0.11.2"
+thiserror = "2.0.18"
+toml = "1.0.7"
+lettre = { version = "0.11.19", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder", "hostname"] }
+keyring = { version = "3.6.3", features = ["async-secret-service", "crypto-rust", "tokio"], default-features = false }
+flume = "0.11"
+futures = "0.3.32"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+chrono = { version = "0.4", features = ["serde"] }
+rust-embed = { version = "8", features = ["debug-embed"] }
+strum = { version = "0.27", features = ["derive"] }
+fastembed = { version = "5", default-features = false, features = ["ort-download-binaries-native-tls", "hf-hub-native-tls"] }
+ort = { version = "=2.0.0-rc.11", default-features = false }
+
+[features]
+default = []
+# Use system-installed ORT with CUDA support instead of bundled CPU-only ORT.
+# Requires: libonnxruntime.so with CUDA (e.g. `paru -S onnxruntime-opt-cuda`)
+# Set ORT_DYLIB_PATH if the library is in a non-standard location.
+cuda = ["ort/load-dynamic", "ort/cuda"]
+
+[patch.crates-io]
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui_macros = { git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed" }
