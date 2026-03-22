@@ -9,8 +9,36 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 
+use chrono::{FixedOffset, TimeZone, Utc};
+
 use crate::config::{ServerConfig, TlsMode};
 use crate::error::{Error, Result};
+
+/// Convert a mail-parser DateTime to a UTC RFC 3339 string for correct chronological sorting.
+pub fn date_to_utc_rfc3339(d: &mail_parser::DateTime) -> String {
+    let offset_secs =
+        (d.tz_hour as i32 * 3600 + d.tz_minute as i32 * 60) * if d.tz_before_gmt { -1 } else { 1 };
+
+    let Some(offset) = FixedOffset::east_opt(offset_secs) else {
+        return d.to_rfc3339();
+    };
+
+    let Some(local) = offset
+        .with_ymd_and_hms(
+            d.year as i32,
+            d.month as u32,
+            d.day as u32,
+            d.hour as u32,
+            d.minute as u32,
+            d.second as u32,
+        )
+        .single()
+    else {
+        return d.to_rfc3339();
+    };
+
+    local.with_timezone(&Utc).to_rfc3339()
+}
 
 /// A stream that is either plaintext TCP or TLS-wrapped.
 #[derive(Debug)]
@@ -223,7 +251,7 @@ impl ImapClient {
 
                     let date = parsed_msg
                         .date()
-                        .map(|d| d.to_rfc3339())
+                        .map(|d| date_to_utc_rfc3339(d))
                         .unwrap_or_default();
 
                     let body_text = parsed_msg.body_text(0).unwrap_or_default().to_string();

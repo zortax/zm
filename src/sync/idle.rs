@@ -381,7 +381,7 @@ async fn sync_mailbox_after_idle(
 
                 let date = parsed_msg
                     .date()
-                    .map(|d| d.to_rfc3339())
+                    .map(|d| crate::mail::imap::date_to_utc_rfc3339(d))
                     .unwrap_or_default();
 
                 let body_text = parsed_msg.body_text(0).unwrap_or_default().to_string();

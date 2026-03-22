@@ -103,7 +103,7 @@ impl InboxView {
             let handler = action_handler.clone();
             |cx| {
                 ListState::new(MailListDelegate::new(mailbox, handler), _window, cx)
-                    .searchable(true)
+                    .searchable(false)
             }
         });
 
@@ -410,12 +410,52 @@ impl InboxView {
 
             let search_task = this
                 .update(cx, |this, cx| {
-                    let Some(engine) = &this.search_engine else {
-                        return None;
-                    };
                     this.is_searching = true;
                     cx.notify();
-                    Some(engine.update(cx, |e, cx| e.search(query.clone(), cx)))
+
+                    let parsed = crate::search::query::parse_query(&query);
+
+                    let semantic_ready = this
+                        .search_engine
+                        .as_ref()
+                        .map(|e| e.read(cx).is_ready())
+                        .unwrap_or(false);
+
+                    if semantic_ready {
+                        // Hybrid search: keyword + semantic
+                        let engine = this.search_engine.as_ref().unwrap();
+                        Some(engine.update(cx, |e, cx| e.hybrid_search(parsed, cx)))
+                    } else {
+                        // Keyword-only search via SQLite
+                        let Some(pool) = this.pool.clone() else {
+                            return None;
+                        };
+                        let keywords = parsed.keyword_terms(true);
+                        let modifiers = parsed.modifiers.clone();
+                        Some(cx.spawn(async move |_this, cx| {
+                            let result = Tokio::spawn(cx, async move {
+                                db::repo::messages::keyword_search(&pool, &keywords, &modifiers, 50)
+                                    .await
+                            })
+                            .await;
+                            match result {
+                                Ok(Ok(msgs)) => msgs
+                                    .into_iter()
+                                    .map(|m| {
+                                        crate::search::store::SearchResult::from_db_message(m, 1.0)
+                                    })
+                                    .collect(),
+                                Ok(Err(e)) => {
+                                    tracing::error!(error = %e, "keyword search failed");
+                                    Vec::new()
+                                }
+                                Err(e) => {
+                                    tracing::error!(error = %e, "keyword search task failed");
+                                    Vec::new()
+                                }
+                            }
+                        }))
+                    }
                 })
                 .ok()
                 .flatten();
@@ -988,12 +1028,6 @@ impl Render for InboxView {
             })
             .unwrap_or(("Initializing...".into(), None));
 
-        let semantic_enabled = self
-            .search_engine
-            .as_ref()
-            .map(|e| e.read(cx).is_enabled())
-            .unwrap_or(false);
-
         let (embed_text, embed_progress) = self
             .search_engine
             .as_ref()
@@ -1003,7 +1037,7 @@ impl Render for InboxView {
             })
             .unwrap_or((None, None));
 
-        let in_search = semantic_enabled && !self.search_query.is_empty();
+        let in_search = !self.search_query.is_empty();
 
         let sidebar = sidebar::render_sidebar(
             &self.mailbox,
@@ -1101,34 +1135,32 @@ impl Render for InboxView {
                                         ))
                                 }),
                         )
-                        .when(semantic_enabled, |el| {
-                            el.child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .left_0()
-                                    .w_full()
-                                    .h_full()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(
-                                        div().w(px(360.)).child(
-                                            Input::new(&self.search_input)
-                                                .prefix(
-                                                    gpui_component::Icon::new(IconName::Search)
-                                                        .size_3p5()
-                                                        .text_color(cx.theme().muted_foreground)
-                                                        .into_any_element(),
-                                                )
-                                                .cleanable(true)
-                                                .small(),
-                                        ),
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .w_full()
+                                .h_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    div().w(px(360.)).child(
+                                        Input::new(&self.search_input)
+                                            .prefix(
+                                                gpui_component::Icon::new(IconName::Search)
+                                                    .size_3p5()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .into_any_element(),
+                                            )
+                                            .cleanable(true)
+                                            .small(),
                                     ),
-                            )
-                        }),
+                                ),
+                        ),
                 )
-                .child(div().border_t_1().border_color(cx.theme().border))
+                .child(gpui_component::divider::Divider::horizontal())
                 .child(content_list)
                 .child({
                     let mb = self.mailbox.read(cx);

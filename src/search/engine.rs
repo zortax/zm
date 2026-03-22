@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use fastembed::TextEmbedding;
@@ -5,7 +6,9 @@ use gpui::*;
 use gpui_tokio::Tokio;
 use sqlx::SqlitePool;
 
+use crate::db::repo::messages;
 use crate::search::embedder;
+use crate::search::query::ParsedQuery;
 use crate::search::store::{EmbeddedMessage, EmbeddingStore, SearchResult};
 
 const EMBED_BATCH_SIZE: usize = 64;
@@ -246,6 +249,106 @@ impl SearchEngine {
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "search task failed");
+                    Vec::new()
+                }
+            };
+
+            let _ = this.update(cx, |this, cx| {
+                this.set_status(SearchEngineStatus::Ready, cx);
+            });
+
+            results
+        })
+    }
+
+    /// Perform hybrid search: uses keyword filtering for exact phrases/modifiers,
+    /// then semantic search on the filtered candidates for free text.
+    pub fn hybrid_search(
+        &mut self,
+        parsed: ParsedQuery,
+        cx: &mut Context<Self>,
+    ) -> Task<Vec<SearchResult>> {
+        if !self.is_ready() || self.model.is_none() {
+            return Task::ready(Vec::new());
+        }
+
+        let has_free_text = !parsed.free_text.is_empty();
+        let has_keyword_constraints = parsed.has_keyword_terms() || parsed.has_modifiers();
+
+        // Pure semantic search (no modifiers, no exact phrases)
+        if has_free_text && !has_keyword_constraints {
+            return self.search(parsed.free_text.clone(), cx);
+        }
+
+        self.set_status(SearchEngineStatus::Searching, cx);
+
+        let model = self.model.clone().unwrap();
+        let pool = self.pool.clone();
+        let cached = self.cached_embeddings.clone();
+        let model_name = self.model_name.clone();
+
+        cx.spawn(async move |this, cx| {
+            let results = Tokio::spawn(cx, async move {
+                // Keyword-only path: no free text for semantic search
+                if !has_free_text {
+                    let keywords = parsed.keyword_terms(false);
+                    let db_results =
+                        messages::keyword_search(&pool, &keywords, &parsed.modifiers, SEARCH_LIMIT)
+                            .await
+                            .map_err(|e| anyhow::anyhow!(e))?;
+                    let results: Vec<SearchResult> = db_results
+                        .into_iter()
+                        .map(|msg| SearchResult::from_db_message(msg, 1.0))
+                        .collect();
+                    return Ok(results);
+                }
+
+                // Hybrid path: keyword filter first, then semantic on candidates
+                let keywords = parsed.keyword_terms(false); // only exact phrases
+                let candidate_ids =
+                    messages::keyword_search_ids(&pool, &keywords, &parsed.modifiers)
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e))?;
+
+                if candidate_ids.is_empty() {
+                    return Ok(Vec::new());
+                }
+
+                let id_set: HashSet<i64> = candidate_ids.into_iter().collect();
+
+                // Embed the free text query
+                let query_embedding = {
+                    let model = model.clone();
+                    let query = parsed.free_text.clone();
+                    let model_name = model_name.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let mut model = model.lock().unwrap();
+                        embedder::embed_query(&mut model, &query, &model_name)
+                    })
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?
+                }?;
+
+                // Search only within candidate IDs
+                let hits = EmbeddingStore::search_filtered(
+                    &query_embedding,
+                    &cached,
+                    Some(&id_set),
+                    SEARCH_LIMIT,
+                );
+
+                EmbeddingStore::hydrate_hits(&pool, &hits).await
+            })
+            .await;
+
+            let results = match results {
+                Ok(Ok(results)) => results,
+                Ok(Err(e)) => {
+                    tracing::error!(error = %e, "hybrid search failed");
+                    Vec::new()
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "hybrid search task failed");
                     Vec::new()
                 }
             };

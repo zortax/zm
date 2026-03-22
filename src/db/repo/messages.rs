@@ -1,6 +1,7 @@
 use sqlx::SqlitePool;
 
 use crate::error::Result;
+use crate::search::query::QueryModifiers;
 use crate::state::mail::MailMessage;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -236,6 +237,207 @@ pub async fn set_starred(pool: &SqlitePool, id: i64, is_starred: bool) -> Result
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Keyword search
+// ---------------------------------------------------------------------------
+
+/// Convert modifier fields into LIKE patterns (Some("%value%")) or None.
+fn modifier_patterns(
+    modifiers: &QueryModifiers,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    let mailbox = modifiers.mailbox.as_ref().map(|v| format!("%{v}%"));
+    let from = modifiers.from.as_ref().map(|v| format!("%{v}%"));
+    let to = modifiers.to.as_ref().map(|v| format!("%{v}%"));
+    let subject = modifiers.subject.as_ref().map(|v| format!("%{v}%"));
+    (mailbox, from, to, subject)
+}
+
+/// Search messages across all folders using a single keyword on subject+body,
+/// with optional modifier filters. All optional params use the NULL-means-skip pattern.
+async fn search_keyword_in_subject_and_body(
+    pool: &SqlitePool,
+    keyword_pattern: Option<String>,
+    modifiers: &QueryModifiers,
+    limit: i32,
+) -> Result<Vec<DbMessage>> {
+    let (mailbox, from, to, subject) = modifier_patterns(modifiers);
+    let rows = sqlx::query_as!(
+        DbMessage,
+        r#"SELECT id as "id!", account_id, mailbox_name, uid,
+                  subject, from_name, from_email, to_addresses,
+                  date, body, is_read as "is_read: bool",
+                  is_starred as "is_starred: bool", fetched_at
+           FROM messages
+           WHERE (?1 IS NULL OR mailbox_name LIKE ?1)
+             AND (?2 IS NULL OR from_email LIKE ?2 OR from_name LIKE ?2)
+             AND (?3 IS NULL OR to_addresses LIKE ?3)
+             AND (?4 IS NULL OR subject LIKE ?4)
+             AND (?5 IS NULL OR subject LIKE ?5 OR body LIKE ?5)
+           ORDER BY date DESC
+           LIMIT ?6"#,
+        mailbox,
+        from,
+        to,
+        subject,
+        keyword_pattern,
+        limit,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Same as above but searches keyword in subject only.
+async fn search_keyword_in_subject_only(
+    pool: &SqlitePool,
+    keyword_pattern: Option<String>,
+    modifiers: &QueryModifiers,
+    limit: i32,
+) -> Result<Vec<DbMessage>> {
+    let (mailbox, from, to, subject) = modifier_patterns(modifiers);
+    let rows = sqlx::query_as!(
+        DbMessage,
+        r#"SELECT id as "id!", account_id, mailbox_name, uid,
+                  subject, from_name, from_email, to_addresses,
+                  date, body, is_read as "is_read: bool",
+                  is_starred as "is_starred: bool", fetched_at
+           FROM messages
+           WHERE (?1 IS NULL OR mailbox_name LIKE ?1)
+             AND (?2 IS NULL OR from_email LIKE ?2 OR from_name LIKE ?2)
+             AND (?3 IS NULL OR to_addresses LIKE ?3)
+             AND (?4 IS NULL OR subject LIKE ?4)
+             AND (?5 IS NULL OR subject LIKE ?5)
+           ORDER BY date DESC
+           LIMIT ?6"#,
+        mailbox,
+        from,
+        to,
+        subject,
+        keyword_pattern,
+        limit,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// IDs-only variant: keyword in subject+body with modifiers.
+async fn search_ids_keyword_in_subject_and_body(
+    pool: &SqlitePool,
+    keyword_pattern: Option<String>,
+    modifiers: &QueryModifiers,
+) -> Result<Vec<i64>> {
+    let (mailbox, from, to, subject) = modifier_patterns(modifiers);
+    let rows = sqlx::query_scalar!(
+        r#"SELECT id as "id!: i64"
+           FROM messages
+           WHERE (?1 IS NULL OR mailbox_name LIKE ?1)
+             AND (?2 IS NULL OR from_email LIKE ?2 OR from_name LIKE ?2)
+             AND (?3 IS NULL OR to_addresses LIKE ?3)
+             AND (?4 IS NULL OR subject LIKE ?4)
+             AND (?5 IS NULL OR subject LIKE ?5 OR body LIKE ?5)
+           ORDER BY date DESC"#,
+        mailbox,
+        from,
+        to,
+        subject,
+        keyword_pattern,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// IDs-only variant: keyword in subject only with modifiers.
+async fn search_ids_keyword_in_subject_only(
+    pool: &SqlitePool,
+    keyword_pattern: Option<String>,
+    modifiers: &QueryModifiers,
+) -> Result<Vec<i64>> {
+    let (mailbox, from, to, subject) = modifier_patterns(modifiers);
+    let rows = sqlx::query_scalar!(
+        r#"SELECT id as "id!: i64"
+           FROM messages
+           WHERE (?1 IS NULL OR mailbox_name LIKE ?1)
+             AND (?2 IS NULL OR from_email LIKE ?2 OR from_name LIKE ?2)
+             AND (?3 IS NULL OR to_addresses LIKE ?3)
+             AND (?4 IS NULL OR subject LIKE ?4)
+             AND (?5 IS NULL OR subject LIKE ?5)
+           ORDER BY date DESC"#,
+        mailbox,
+        from,
+        to,
+        subject,
+        keyword_pattern,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Search messages with keyword matching and modifier filters.
+///
+/// The first keyword is handled in SQL; additional keywords are filtered in Rust.
+/// When `subject:` modifier is set, keywords match subject only; otherwise subject+body.
+pub async fn keyword_search(
+    pool: &SqlitePool,
+    keywords: &[String],
+    modifiers: &QueryModifiers,
+    limit: usize,
+) -> Result<Vec<DbMessage>> {
+    let subject_only = modifiers.subject.is_some();
+    let first_kw = keywords.first().map(|kw| format!("%{kw}%"));
+
+    let mut results = if subject_only {
+        search_keyword_in_subject_only(pool, first_kw, modifiers, limit as i32).await?
+    } else {
+        search_keyword_in_subject_and_body(pool, first_kw, modifiers, limit as i32).await?
+    };
+
+    // Filter by remaining keywords in Rust
+    for kw in keywords.iter().skip(1) {
+        let kw_lower = kw.to_lowercase();
+        results.retain(|msg| {
+            let subj = msg.subject.to_lowercase();
+            if subject_only {
+                subj.contains(&kw_lower)
+            } else {
+                subj.contains(&kw_lower) || msg.body.to_lowercase().contains(&kw_lower)
+            }
+        });
+    }
+
+    Ok(results)
+}
+
+/// Same as `keyword_search` but returns only message IDs (for hybrid search pipeline).
+pub async fn keyword_search_ids(
+    pool: &SqlitePool,
+    keywords: &[String],
+    modifiers: &QueryModifiers,
+) -> Result<Vec<i64>> {
+    // When we need to filter additional keywords in Rust, we must fetch full messages
+    // to check subject/body. Only use the ids-only path when there are 0-1 keywords.
+    if keywords.len() <= 1 {
+        let subject_only = modifiers.subject.is_some();
+        let first_kw = keywords.first().map(|kw| format!("%{kw}%"));
+        return if subject_only {
+            search_ids_keyword_in_subject_only(pool, first_kw, modifiers).await
+        } else {
+            search_ids_keyword_in_subject_and_body(pool, first_kw, modifiers).await
+        };
+    }
+
+    // Multiple keywords: fetch full messages, filter in Rust, return IDs
+    let results = keyword_search(pool, keywords, modifiers, i32::MAX as usize).await?;
+    Ok(results.into_iter().map(|m| m.id).collect())
+}
+
 impl From<DbMessage> for MailMessage {
     fn from(db: DbMessage) -> Self {
         let to: Vec<String> = serde_json::from_str(&db.to_addresses).unwrap_or_default();
@@ -431,5 +633,117 @@ mod tests {
 
         assert_eq!(list(&pool, "acct1", "INBOX").await.unwrap().len(), 1);
         assert_eq!(list(&pool, "acct2", "INBOX").await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn keyword_search_by_subject() {
+        let pool = test_pool().await;
+
+        let mut msg1 = sample_message("acct1", "INBOX", 1);
+        msg1.subject = "Invoice from Alice".into();
+        msg1.body = "Please find attached".into();
+        upsert(&pool, &msg1).await.unwrap();
+
+        let mut msg2 = sample_message("acct1", "INBOX", 2);
+        msg2.subject = "Meeting notes".into();
+        msg2.body = "Discussion about invoices".into();
+        upsert(&pool, &msg2).await.unwrap();
+
+        let mut msg3 = sample_message("acct1", "Sent", 1);
+        msg3.subject = "Re: Invoice".into();
+        upsert(&pool, &msg3).await.unwrap();
+
+        // Search across all folders
+        let results = keyword_search(&pool, &["Invoice".into()], &QueryModifiers::default(), 50)
+            .await
+            .unwrap();
+        // msg1 (subject match) and msg2 (body match) and msg3 (subject match)
+        assert_eq!(results.len(), 3);
+
+        // With mailbox modifier
+        let results = keyword_search(
+            &pool,
+            &["Invoice".into()],
+            &QueryModifiers {
+                mailbox: Some("INBOX".into()),
+                ..Default::default()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn keyword_search_with_from_modifier() {
+        let pool = test_pool().await;
+
+        let mut msg1 = sample_message("acct1", "INBOX", 1);
+        msg1.from_name = "Alice Smith".into();
+        msg1.from_email = "alice@example.com".into();
+        msg1.subject = "Hello".into();
+        upsert(&pool, &msg1).await.unwrap();
+
+        let mut msg2 = sample_message("acct1", "INBOX", 2);
+        msg2.from_name = "Bob Jones".into();
+        msg2.from_email = "bob@example.com".into();
+        msg2.subject = "Hello".into();
+        upsert(&pool, &msg2).await.unwrap();
+
+        let results = keyword_search(
+            &pool,
+            &["Hello".into()],
+            &QueryModifiers {
+                from: Some("alice".into()),
+                ..Default::default()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].from_email, "alice@example.com");
+    }
+
+    #[tokio::test]
+    async fn keyword_search_ids_returns_ids() {
+        let pool = test_pool().await;
+
+        let mut msg = sample_message("acct1", "INBOX", 1);
+        msg.subject = "Test message".into();
+        upsert(&pool, &msg).await.unwrap();
+
+        let ids = keyword_search_ids(&pool, &["Test".into()], &QueryModifiers::default())
+            .await
+            .unwrap();
+        assert_eq!(ids.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn keyword_search_multiple_keywords() {
+        let pool = test_pool().await;
+
+        let mut msg1 = sample_message("acct1", "INBOX", 1);
+        msg1.subject = "Invoice from Alice".into();
+        msg1.body = "Payment details enclosed".into();
+        upsert(&pool, &msg1).await.unwrap();
+
+        let mut msg2 = sample_message("acct1", "INBOX", 2);
+        msg2.subject = "Invoice from Bob".into();
+        msg2.body = "No payment info".into();
+        upsert(&pool, &msg2).await.unwrap();
+
+        // Both keywords must match
+        let results = keyword_search(
+            &pool,
+            &["Invoice".into(), "Alice".into()],
+            &QueryModifiers::default(),
+            50,
+        )
+        .await
+        .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].uid, 1);
     }
 }

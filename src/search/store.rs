@@ -1,5 +1,8 @@
+use std::collections::HashSet;
+
 use sqlx::{Row, SqlitePool};
 
+use crate::db::repo::messages::DbMessage;
 use crate::error::Result;
 
 /// A message with its embedding vector, for in-memory similarity search.
@@ -32,6 +35,27 @@ pub struct SearchResult {
     pub body: String,
     pub is_read: bool,
     pub is_starred: bool,
+}
+
+impl SearchResult {
+    /// Convert a `DbMessage` into a `SearchResult` with the given relevance score.
+    pub fn from_db_message(msg: DbMessage, score: f32) -> Self {
+        Self {
+            message_id: msg.id,
+            score,
+            account_id: msg.account_id,
+            mailbox_name: msg.mailbox_name,
+            uid: msg.uid,
+            subject: msg.subject,
+            from_name: msg.from_name,
+            from_email: msg.from_email,
+            to_addresses: msg.to_addresses,
+            date: msg.date,
+            body: msg.body,
+            is_read: msg.is_read,
+            is_starred: msg.is_starred,
+        }
+    }
 }
 
 /// Store and query embeddings in SQLite.
@@ -151,8 +175,24 @@ impl EmbeddingStore {
         all_embeddings: &[EmbeddedMessage],
         limit: usize,
     ) -> Vec<SearchHit> {
-        let mut scored: Vec<SearchHit> = all_embeddings
-            .iter()
+        Self::search_filtered(query_embedding, all_embeddings, None, limit)
+    }
+
+    /// Search with an optional filter set of candidate message IDs.
+    /// When `candidate_ids` is Some, only embeddings for those messages are considered.
+    pub fn search_filtered(
+        query_embedding: &[f32],
+        all_embeddings: &[EmbeddedMessage],
+        candidate_ids: Option<&HashSet<i64>>,
+        limit: usize,
+    ) -> Vec<SearchHit> {
+        let iter = all_embeddings.iter().filter(|em| {
+            candidate_ids
+                .map(|ids| ids.contains(&em.message_id))
+                .unwrap_or(true)
+        });
+
+        let mut scored: Vec<SearchHit> = iter
             .map(|em| SearchHit {
                 message_id: em.message_id,
                 score: cosine_similarity(query_embedding, &em.embedding),
