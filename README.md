@@ -1,8 +1,9 @@
 # zm
 
-A desktop email client built with Rust and [GPUI](https://github.com/zed-industries/zed).
+A desktop email client built with Rust and [GPUI](https://github.com/zed-industries/zed). Early stage, expect rough edges.
 
-Currently Linux-only (X11 and Wayland). Early stage, expect rough edges.
+
+![zm](https://github.com/user-attachments/assets/00aff6c7-ad29-4705-adbf-328ecd99b541)
 
 ## Features
 
