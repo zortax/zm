@@ -5,9 +5,10 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 
 [dependencies]
-gpui = { git = "https://github.com/zed-industries/zed" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
-gpui_tokio = { git = "https://github.com/zed-industries/zed" }
+gpui = { git = "https://github.com/zortax/zed", rev = "54cd6acb2d143434f1792478ea98fe4c2f0daaa7" }
+gpui_wgpu = { git = "https://github.com/zortax/zed", rev = "54cd6acb2d143434f1792478ea98fe4c2f0daaa7" }
+gpui_platform = { git = "https://github.com/zortax/zed", rev = "54cd6acb2d143434f1792478ea98fe4c2f0daaa7", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui_tokio = { git = "https://github.com/zortax/zed", rev = "54cd6acb2d143434f1792478ea98fe4c2f0daaa7" }
 gpui-component = { git = "https://github.com/longbridge/gpui-component" }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
 tokio = { version = "1.50.0", features = ["full"] }
@@ -35,6 +36,20 @@ strum = { version = "0.27", features = ["derive"] }
 fastembed = { version = "5", default-features = false, features = ["ort-download-binaries-native-tls", "hf-hub-native-tls"] }
 ort = { version = "=2.0.0-rc.11", default-features = false }
 
+# HTML/CSS email rendering
+blitz-dom = { path = "vendor/blitz/packages/blitz-dom", default-features = false, features = ["system_fonts"] }
+blitz-html = { path = "vendor/blitz/packages/blitz-html", default-features = false }
+blitz-paint = { path = "vendor/blitz/packages/blitz-paint", default-features = false }
+blitz-traits = { path = "vendor/blitz/packages/blitz-traits", default-features = false }
+anyrender_vello = { path = "vendor/anyrender/crates/anyrender_vello" }
+vello = { path = "vendor/vello/vello", features = ["wgpu"] }
+wgpu = { git = "https://github.com/zed-industries/wgpu.git", branch = "v29" }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+ureq = "3"
+data-url = "0.3"
+regex = "1"
+once_cell = "1"
+
 [features]
 default = []
 # Use system-installed ORT with CUDA support instead of bundled CPU-only ORT.
@@ -43,6 +58,23 @@ default = []
 cuda = ["ort/load-dynamic", "ort/cuda"]
 
 [patch.crates-io]
-gpui = { git = "https://github.com/zed-industries/zed" }
-gpui_macros = { git = "https://github.com/zed-industries/zed" }
-gpui_platform = { git = "https://github.com/zed-industries/zed" }
+anyrender = { path = "vendor/anyrender/crates/anyrender" }
+anyrender_vello = { path = "vendor/anyrender/crates/anyrender_vello" }
+wgpu_context = { path = "vendor/anyrender/crates/wgpu_context" }
+wgpu = { git = "https://github.com/zed-industries/wgpu.git", branch = "v29" }
+naga = { git = "https://github.com/zed-industries/wgpu.git", branch = "v29" }
+wgpu-core = { git = "https://github.com/zed-industries/wgpu.git", branch = "v29" }
+wgpu-hal = { git = "https://github.com/zed-industries/wgpu.git", branch = "v29" }
+wgpu-types = { git = "https://github.com/zed-industries/wgpu.git", branch = "v29" }
+vello = { path = "vendor/vello/vello" }
+vello_encoding = { path = "vendor/vello/vello_encoding" }
+# Stub out serde_fmt to prevent its From<Error> for fmt::Error impl from
+# conflicting with stylo's ToCss derive macro (which relies on From<T> for T).
+serde_fmt = { path = "vendor/serde_fmt" }
+
+# Redirect gpui-component's transitive git dep on zed-industries/zed to our fork
+[patch."https://github.com/zed-industries/zed"]
+gpui = { git = "https://github.com/zortax/zed", rev = "54cd6acb2d143434f1792478ea98fe4c2f0daaa7" }
+gpui_macros = { git = "https://github.com/zortax/zed", rev = "54cd6acb2d143434f1792478ea98fe4c2f0daaa7" }
+gpui_platform = { git = "https://github.com/zortax/zed", rev = "54cd6acb2d143434f1792478ea98fe4c2f0daaa7" }
+gpui_tokio = { git = "https://github.com/zortax/zed", rev = "54cd6acb2d143434f1792478ea98fe4c2f0daaa7" }
