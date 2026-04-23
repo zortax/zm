@@ -224,6 +224,7 @@ async fn run_sync_inner(
                     to_addresses: to_json,
                     date: msg.date.clone(),
                     body: msg.body.clone(),
+                    body_html: msg.body_html.clone(),
                     is_read: msg.is_read,
                     is_starred: msg.is_starred,
                     fetched_at: String::new(),

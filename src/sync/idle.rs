@@ -385,6 +385,7 @@ async fn sync_mailbox_after_idle(
                     .unwrap_or_default();
 
                 let body_text = parsed_msg.body_text(0).unwrap_or_default().to_string();
+                let body_html = parsed_msg.body_html(0).unwrap_or_default().to_string();
                 let to_json = serde_json::to_string(&to).unwrap_or_else(|_| "[]".into());
 
                 let db_msg = DbMessage {
@@ -398,6 +399,7 @@ async fn sync_mailbox_after_idle(
                     to_addresses: to_json,
                     date,
                     body: body_text,
+                    body_html,
                     is_read,
                     is_starred,
                     fetched_at: String::new(),

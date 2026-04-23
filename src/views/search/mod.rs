@@ -81,6 +81,7 @@ impl ListDelegate for SearchListDelegate {
                     subject: result.subject.clone(),
                     date: crate::db::repo::messages::format_date_public(&result.date),
                     body: result.body.clone(),
+                    body_html: String::new(),
                     is_read: result.is_read,
                     is_starred: result.is_starred,
                 };

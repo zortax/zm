@@ -17,6 +17,7 @@ pub struct DbMessage {
     pub to_addresses: String, // JSON array
     pub date: String,
     pub body: String,
+    pub body_html: String,
     pub is_read: bool,
     pub is_starred: bool,
     pub fetched_at: String,
@@ -25,8 +26,8 @@ pub struct DbMessage {
 pub async fn upsert(pool: &SqlitePool, msg: &DbMessage) -> Result<()> {
     sqlx::query!(
         r#"INSERT INTO messages (account_id, mailbox_name, uid, subject, from_name, from_email,
-                                  to_addresses, date, body, is_read, is_starred)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  to_addresses, date, body, body_html, is_read, is_starred)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(account_id, mailbox_name, uid) DO UPDATE
            SET subject = excluded.subject,
                from_name = excluded.from_name,
@@ -34,6 +35,7 @@ pub async fn upsert(pool: &SqlitePool, msg: &DbMessage) -> Result<()> {
                to_addresses = excluded.to_addresses,
                date = excluded.date,
                body = excluded.body,
+               body_html = excluded.body_html,
                is_read = excluded.is_read,
                is_starred = excluded.is_starred"#,
         msg.account_id,
@@ -45,6 +47,7 @@ pub async fn upsert(pool: &SqlitePool, msg: &DbMessage) -> Result<()> {
         msg.to_addresses,
         msg.date,
         msg.body,
+        msg.body_html,
         msg.is_read,
         msg.is_starred,
     )
@@ -62,7 +65,7 @@ pub async fn list(
         DbMessage,
         r#"SELECT id as "id!", account_id, mailbox_name, uid,
                   subject, from_name, from_email, to_addresses,
-                  date, body, is_read as "is_read: bool",
+                  date, body, body_html, is_read as "is_read: bool",
                   is_starred as "is_starred: bool", fetched_at
            FROM messages
            WHERE account_id = ? AND mailbox_name = ?
@@ -270,7 +273,7 @@ async fn search_keyword_in_subject_and_body(
         DbMessage,
         r#"SELECT id as "id!", account_id, mailbox_name, uid,
                   subject, from_name, from_email, to_addresses,
-                  date, body, is_read as "is_read: bool",
+                  date, body, body_html, is_read as "is_read: bool",
                   is_starred as "is_starred: bool", fetched_at
            FROM messages
            WHERE (?1 IS NULL OR mailbox_name LIKE ?1)
@@ -304,7 +307,7 @@ async fn search_keyword_in_subject_only(
         DbMessage,
         r#"SELECT id as "id!", account_id, mailbox_name, uid,
                   subject, from_name, from_email, to_addresses,
-                  date, body, is_read as "is_read: bool",
+                  date, body, body_html, is_read as "is_read: bool",
                   is_starred as "is_starred: bool", fetched_at
            FROM messages
            WHERE (?1 IS NULL OR mailbox_name LIKE ?1)
@@ -453,6 +456,7 @@ impl From<DbMessage> for MailMessage {
             subject: db.subject,
             date,
             body: db.body,
+            body_html: db.body_html,
             is_read: db.is_read,
             is_starred: db.is_starred,
         }
@@ -520,6 +524,7 @@ mod tests {
             to_addresses: r#"["recipient@example.com"]"#.into(),
             date: "2026-03-21".into(),
             body: "Hello world".into(),
+            body_html: String::new(),
             is_read: false,
             is_starred: false,
             fetched_at: String::new(),

@@ -12,6 +12,7 @@ pub struct MailMessage {
     pub subject: String,
     pub date: String,
     pub body: String,
+    pub body_html: String,
     pub is_read: bool,
     pub is_starred: bool,
 }

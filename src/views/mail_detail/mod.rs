@@ -11,6 +11,7 @@ use gpui_component::{
 use crate::assets::IconName;
 use crate::components::mail_actions::MailActions;
 use crate::components::mail_metadata::MailMetadata;
+use crate::html_render::HtmlEmailView;
 use crate::state::mail::MailMessage;
 
 pub fn open_mail_dialog(msg: &MailMessage, window: &mut Window, cx: &mut App) {
@@ -19,6 +20,7 @@ pub fn open_mail_dialog(msg: &MailMessage, window: &mut Window, cx: &mut App) {
     let to: SharedString = msg.to.join(", ").into();
     let date: SharedString = msg.date.clone().into();
     let body: SharedString = msg.body.clone().into();
+    let body_html = msg.body_html.clone();
     let is_starred = msg.is_starred;
     let warning_color = cx.theme().warning;
 
@@ -30,6 +32,12 @@ pub fn open_mail_dialog(msg: &MailMessage, window: &mut Window, cx: &mut App) {
             .multi_line(true)
             .default_value(body.clone())
     });
+
+    let html_view = if !body_html.is_empty() {
+        Some(cx.new(|cx| HtmlEmailView::new(body_html, window, cx)))
+    } else {
+        None
+    };
 
     window.open_dialog(cx, move |dialog, _, _cx| {
         dialog
@@ -44,8 +52,13 @@ pub fn open_mail_dialog(msg: &MailMessage, window: &mut Window, cx: &mut App) {
                 let to_input = to_input.clone();
                 let date_input = date_input.clone();
                 let body_input = body_input.clone();
+                let html_view = html_view.clone();
                 move |content, _, _cx| {
                     content
+                        .flex()
+                        .flex_col()
+                        .size_full()
+                        .overflow_hidden()
                         .child(
                             DialogHeader::new().p_4().pb_2().child(
                                 h_flex()
@@ -70,13 +83,24 @@ pub fn open_mail_dialog(msg: &MailMessage, window: &mut Window, cx: &mut App) {
                         )))
                         .child(div().px_4().child(Divider::horizontal()))
                         .child(
-                            div().flex_1().p_4().min_h_0().child(
-                                div().size_full().opacity(1.).child(
-                                    Input::new(&body_input)
-                                        .appearance(false)
-                                        .disabled(true)
-                                        .h_full(),
-                                ),
+                            div().id("mail-body-scroll").flex_1().p_4().min_h_0().overflow_y_scroll().child(
+                                if let Some(ref html_view) = html_view {
+                                    div()
+                                        .w_full()
+                                        .child(html_view.clone())
+                                        .into_any_element()
+                                } else {
+                                    div()
+                                        .size_full()
+                                        .opacity(1.)
+                                        .child(
+                                            Input::new(&body_input)
+                                                .appearance(false)
+                                                .disabled(true)
+                                                .h_full(),
+                                        )
+                                        .into_any_element()
+                                },
                             ),
                         )
                 }

@@ -6,6 +6,7 @@ mod config;
 mod credentials;
 mod db;
 mod error;
+mod html_render;
 mod mail;
 mod search;
 mod state;
@@ -151,6 +152,12 @@ fn main() {
         {
             Theme::global_mut(cx).apply_config(&fallback);
         }
+
+        // Request extra GPU features/limits needed by the blitz HTML renderer (vello compute shaders).
+        cx.set_gpu_requirements(Box::new(gpui_wgpu::WgpuDeviceRequirements {
+            features: wgpu::Features::CLEAR_TEXTURE,
+            limits: wgpu::Limits::default(),
+        }));
 
         cx.open_window(WindowOptions::default(), |window, cx| {
             let view = cx.new(|cx| AppView::new(window, cx));

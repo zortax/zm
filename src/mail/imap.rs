@@ -108,6 +108,7 @@ pub struct FetchedMessage {
     pub to: Vec<String>,
     pub date: String,
     pub body: String,
+    pub body_html: String,
     pub is_read: bool,
     pub is_starred: bool,
 }
@@ -225,7 +226,7 @@ impl ImapClient {
 
             let parsed = mail_parser::MessageParser::default().parse(body_bytes);
 
-            let (subject, from_name, from_email, to, date, body_text) = match parsed {
+            let (subject, from_name, from_email, to, date, body_text, body_html) = match parsed {
                 Some(ref parsed_msg) => {
                     let subject = parsed_msg.subject().unwrap_or("").to_string();
 
@@ -255,8 +256,9 @@ impl ImapClient {
                         .unwrap_or_default();
 
                     let body_text = parsed_msg.body_text(0).unwrap_or_default().to_string();
+                    let body_html = parsed_msg.body_html(0).unwrap_or_default().to_string();
 
-                    (subject, from_name, from_email, to, date, body_text)
+                    (subject, from_name, from_email, to, date, body_text, body_html)
                 }
                 None => {
                     tracing::warn!(uid, "failed to parse message body");
@@ -272,6 +274,7 @@ impl ImapClient {
                 to,
                 date,
                 body: body_text,
+                body_html,
                 is_read,
                 is_starred,
             });
